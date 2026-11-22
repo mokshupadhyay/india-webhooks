@@ -17,21 +17,37 @@ export function encodeForm(fields: Readonly<Record<string, string>>): string {
   return params.toString();
 }
 
-/** Returns the body bytes, or `null` when `rawBody` is not a string or `Uint8Array`. */
+const arrayBufferByteLength = (Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength') as PropertyDescriptor)
+  .get as (this: unknown) => number;
+
+/** True for a real `ArrayBuffer`, from this realm or another (workers, vm contexts). */
+function isArrayBuffer(value: unknown): value is ArrayBuffer {
+  if (typeof value !== 'object' || value === null) return false;
+  try {
+    // The getter throws for anything that is not an ArrayBuffer, whatever its prototype or tag.
+    arrayBufferByteLength.call(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns the body bytes, or `null` when `rawBody` is not a string, an
+ * `ArrayBuffer` or an `ArrayBufferView`. Views (`Uint8Array`, Node `Buffer`,
+ * `DataView`, other typed arrays) are read as the bytes they cover.
+ */
 export function bodyBytes(rawBody: unknown): Uint8Array | null {
   if (typeof rawBody === 'string') return utf8(rawBody);
-  // Checked by tag rather than `instanceof` so Node `Buffer`s and arrays from
-  // other realms (workers, vm contexts) are accepted too.
-  if (ArrayBuffer.isView(rawBody) && Object.prototype.toString.call(rawBody) === '[object Uint8Array]') {
-    const view = rawBody as Uint8Array;
-    return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-  }
+  // `ArrayBuffer.isView` checks an internal slot, so it works across realms.
+  if (ArrayBuffer.isView(rawBody)) return new Uint8Array(rawBody.buffer, rawBody.byteOffset, rawBody.byteLength);
+  if (isArrayBuffer(rawBody)) return new Uint8Array(rawBody);
   return null;
 }
 
 export function rawBodyProblem(rawBody: unknown): string {
   const kind = rawBody === null ? 'null' : Array.isArray(rawBody) ? 'array' : typeof rawBody;
-  return `rawBody must be the exact request body as a string or Uint8Array, got ${kind}. Read the body before any JSON or form parser runs.`;
+  return `rawBody must be the exact request body as a string, Uint8Array, Buffer, ArrayBuffer or other ArrayBufferView, got ${kind}. Read the body before any JSON or form parser runs.`;
 }
 
 export const isJsonObject = (value: unknown): value is JsonObject =>
@@ -51,20 +67,21 @@ export function parseJsonObject(bytes: Uint8Array): JsonObject | null {
 export const looksLikeJson = (bytes: Uint8Array): boolean => /^\s*[{[]/.test(decodeUtf8(bytes.subarray(0, 64)));
 
 export interface ParsedForm {
+  /** Each name with its first value. */
   fields: Record<string, string>;
-  /** Names that appeared more than once with different values. */
-  conflicting: Set<string>;
+  /** Names that appeared more than once, with the same value or not. */
+  repeated: Set<string>;
 }
 
-/** Parses `application/x-www-form-urlencoded` bytes. The first occurrence of a name wins. */
+/** Parses `application/x-www-form-urlencoded` bytes. The first occurrence of a name is kept in `fields`. */
 export function parseForm(bytes: Uint8Array): ParsedForm {
   const fields: Record<string, string> = {};
-  const conflicting = new Set<string>();
+  const repeated = new Set<string>();
   new URLSearchParamsCtor(decodeUtf8(bytes)).forEach((value, key) => {
     if (!Object.prototype.hasOwnProperty.call(fields, key)) fields[key] = value;
-    else if (fields[key] !== value) conflicting.add(key);
+    else repeated.add(key);
   });
-  return { fields, conflicting };
+  return { fields, repeated };
 }
 
 // Small readers for loosely typed gateway payloads.

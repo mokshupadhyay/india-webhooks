@@ -3,7 +3,7 @@
 // X-Razorpay-Signature = hex(HMAC-SHA256(key = webhook secret, message = raw body)).
 
 import { minorFromInteger } from '../core/amount.js';
-import { bodyBytes, isoFromSeconds, objectAt, parseJsonObject, rawBodyProblem, textAt } from '../core/body.js';
+import { arrayAt, bodyBytes, isoFromSeconds, objectAt, parseJsonObject, rawBodyProblem, textAt } from '../core/body.js';
 import { safeEqualText, toHex, utf8 } from '../core/bytes.js';
 import { hmacSha256 } from '../core/crypto.js';
 import { readHeader } from '../core/headers.js';
@@ -63,7 +63,24 @@ function refundFrom(entity: JsonObject, payment: PaymentDetails | undefined): Re
   };
 }
 
-export function normalizeRazorpay(raw: JsonObject, eventId: string | null): WebhookEvent {
+/**
+ * The id of the entity the event is about: the refund or payment for mapped
+ * events, otherwise the first entity named in `contains` that has an id.
+ */
+function entityIdOf(raw: JsonObject, type: EventType): string | null {
+  const payload = objectAt(raw.payload) || {};
+  const idOf = (name: string) => textAt(objectAt(objectAt(payload[name])?.entity)?.id);
+  if (type.startsWith('refund.')) return idOf('refund');
+  if (type.startsWith('payment.')) return idOf('payment');
+  for (const name of arrayAt(raw.contains) || []) {
+    const id = typeof name === 'string' ? idOf(name) : null;
+    if (id !== null) return id;
+  }
+  return idOf('refund') || idOf('payment');
+}
+
+/** `deliveryId` is the unsigned `x-razorpay-event-id` header, or `null`. */
+export function normalizeRazorpay(raw: JsonObject, deliveryId: string | null): WebhookEvent {
   const providerType = textAt(raw.event);
   const type = (providerType !== null && EVENT_TYPES[providerType]) || 'unknown';
   const payload = objectAt(raw.payload);
@@ -74,6 +91,7 @@ export function normalizeRazorpay(raw: JsonObject, eventId: string | null): Webh
     provider: 'razorpay',
     type,
     id: '',
+    deliveryId,
     occurredAt: isoFromSeconds(raw.created_at),
     providerType,
     raw,
@@ -88,8 +106,8 @@ export function normalizeRazorpay(raw: JsonObject, eventId: string | null): Webh
     event.refund = refundFrom(refundEntity, event.payment);
   }
 
-  const entityId = textAt((refundEntity || paymentEntity || {}).id);
-  event.id = eventId || [providerType || 'event', entityId || '', textAt(raw.created_at) || ''].join(':');
+  // Only signed body fields: the event name, the entity id and the event's creation time.
+  event.id = [providerType || 'event', entityIdOf(raw, type) || '', textAt(raw.created_at) || ''].join(':');
   return event;
 }
 

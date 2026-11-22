@@ -4,7 +4,6 @@
 // and the official SDK's validateHash (payu-india/payu-sdk-node, hasher.js):
 // hash = hex(SHA-512("[additionalCharges|]SALT|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key")).
 
-import { fail } from '../core/result.js';
 import type { SecretVerifyOptions, VerifyResult, WebhookEvent } from '../core/types.js';
 import { field, formHash, normalizeForm, verifyForm } from './form.js';
 import type { FormFields, FormScheme } from './form.js';
@@ -41,8 +40,9 @@ export const payuScheme: FormScheme = {
   eventType(fields) {
     switch (field(fields, 'status')) {
       case 'success':
-        // `unmappedstatus` is not covered by the hash; see the README.
-        return field(fields, 'unmappedstatus') === 'auth' ? 'payment.authorized' : 'payment.captured';
+        // PayU: "Treat only success as successful". Its `unmappedstatus`
+        // (auth or captured) is not hashed, so it is only in `unverified`.
+        return 'payment.captured';
       case 'failure':
         return 'payment.failed';
       case 'pending':
@@ -55,11 +55,7 @@ export const payuScheme: FormScheme = {
     const id = field(fields, 'mihpayid').trim();
     return id === '' ? null : id;
   },
-  jsonBody: () =>
-    fail(
-      'unsupported_event',
-      'PayU refund and dispute webhooks are JSON and carry no hash or signature, so they cannot be verified.',
-    ),
+  jsonBodyNote: 'PayU refund and dispute webhooks are JSON and carry no hash or signature, so they cannot be verified.',
 };
 
 /** The value PayU puts in the `hash` field for these form fields. */

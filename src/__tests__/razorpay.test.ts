@@ -36,7 +36,8 @@ describe('razorpay', () => {
     expect(event).toMatchObject({
       provider: 'razorpay',
       type: 'payment.captured',
-      id: 'evt_123',
+      id: 'payment.captured:pay_DESlfW9H8K9uqM:1567674606',
+      deliveryId: 'evt_123',
       providerType: 'payment.captured',
       occurredAt: '2019-09-05T09:10:06.000Z',
       payment: {

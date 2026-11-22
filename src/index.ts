@@ -15,7 +15,9 @@ import { verifyRazorpayWebhook } from './providers/razorpay.js';
  * `india-webhooks/razorpay` to ship only one.
  */
 export function verifyWebhook<P extends Provider>(provider: P, options: VerifyOptionsMap[P]): Promise<VerifyResult> {
-  switch (provider as Provider) {
+  // Nothing here can throw: `switch` compares with `===`, which runs no user
+  // code, and each verifier returns a promise that never rejects.
+  switch (provider as unknown) {
     case 'razorpay':
       return verifyRazorpayWebhook(options as SecretVerifyOptions);
     case 'cashfree':
@@ -29,8 +31,14 @@ export function verifyWebhook<P extends Provider>(provider: P, options: VerifyOp
     case 'easebuzz':
       return verifyEasebuzzWebhook(options as SecretVerifyOptions);
     default:
-      return Promise.resolve(fail('invalid_options', `Unknown provider: ${String(provider)}.`));
+      return Promise.resolve(fail('invalid_options', `Unknown provider: ${describeProvider(provider)}.`));
   }
+}
+
+/** Names the bad provider without calling any of its methods, so it cannot throw. */
+function describeProvider(provider: unknown): string {
+  if (typeof provider === 'string') return JSON.stringify(provider.length > 40 ? `${provider.slice(0, 40)}...` : provider);
+  return provider === null ? 'null' : `a value of type ${typeof provider}`;
 }
 
 export { PROVIDERS } from './core/types.js';
@@ -46,6 +54,8 @@ export type {
   CredentialsVerifyOptions,
   EventType,
   FailureReason,
+  HeaderEntries,
+  HeaderForEach,
   HeadersInput,
   HeadersLike,
   HeaderValue,

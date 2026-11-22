@@ -73,13 +73,15 @@ function refundFrom(refund: JsonObject, key: string): RefundDetails {
   };
 }
 
-export function normalizeCashfree(raw: JsonObject, idempotencyKey: string | null): WebhookEvent {
+/** `deliveryId` is the unsigned `x-idempotency-key` header, or `null`. */
+export function normalizeCashfree(raw: JsonObject, deliveryId: string | null): WebhookEvent {
   const providerType = textAt(raw.type);
   const data = objectAt(raw.data) || {};
   const event: WebhookEvent = {
     provider: 'cashfree',
     type: 'unknown',
     id: '',
+    deliveryId,
     occurredAt: isoFromDateTime(raw.event_time),
     providerType,
     raw,
@@ -99,9 +101,12 @@ export function normalizeCashfree(raw: JsonObject, idempotencyKey: string | null
       event.refund = refundFrom(refund, key);
     }
     entityId = refund ? textAt(refund.cf_refund_id) : null;
+  } else {
+    entityId = textAt(objectAt(data.payment)?.cf_payment_id) || textAt(objectAt(data.refund)?.cf_refund_id);
   }
 
-  event.id = idempotencyKey || [providerType || 'event', entityId || '', textAt(raw.event_time) || ''].join(':');
+  // Only signed body fields: the event type, the entity id and the event time.
+  event.id = [providerType || 'event', entityId || '', textAt(raw.event_time) || ''].join(':');
   return event;
 }
 

@@ -1,8 +1,8 @@
 import fc from 'fast-check';
 import { encodeForm, parseForm } from '../core/body';
 import { utf8 } from '../core/bytes';
-import { verifyWebhook } from '../index';
-import type { Credentials, JsonObject, VerifyResult } from '../index';
+import { PROVIDERS, verifyWebhook } from '../index';
+import type { Credentials, FailureReason, JsonObject, VerifyOptionsMap, VerifyResult } from '../index';
 import { signWebhook } from '../testing';
 
 const NOW = 1785401067911;
@@ -10,8 +10,10 @@ const RUNS = { numRuns: 150 };
 
 // Arbitrary text including astral characters and, through `binary`, lone surrogates.
 const text = fc.oneof(fc.string(), fc.string({ unit: 'binary' }), fc.string({ unit: 'grapheme' }));
-const secret = text.filter((s) => s.length > 0);
-const credentials: fc.Arbitrary<Credentials> = fc.record({ username: text, password: text });
+// Blank secrets and credentials are rejected as invalid_options, so they are not generated here.
+const nonBlank = text.filter((s) => s.trim().length > 0);
+const secret = nonBlank;
+const credentials: fc.Arbitrary<Credentials> = fc.record({ username: nonBlank, password: nonBlank });
 const jsonPayload = fc.dictionary(text, fc.jsonValue({ maxDepth: 3 }), { maxKeys: 6 }) as fc.Arbitrary<JsonObject>;
 
 const HASHED = ['status', 'udf1', 'udf2', 'udf3', 'udf4', 'udf5', 'email', 'firstname', 'productinfo', 'txnid', 'key'];
@@ -29,7 +31,9 @@ const formPayload = fc
     const fields: Record<string, string> = { ...extra, status, amount };
     delete fields.hash;
     return fields;
-  });
+  })
+  // Names with lone surrogates can decode to the same name, which verifiers reject as repeated.
+  .filter((fields) => parseForm(utf8(encodeForm(fields))).repeated.size === 0);
 
 const ok = (result: VerifyResult) => {
   if (!result.ok) throw new Error(`${result.reason}: ${result.message}`);
@@ -221,5 +225,89 @@ describe('property 3: amountMinor is an integer string that round-trips the docu
         }
       }),
       RUNS,
+    ));
+});
+
+describe('property 4: a request without valid authentication only ever gets missing_header or bad_signature', () => {
+  // A handler might acknowledge malformed_body or unsupported_event with a 200,
+  // so those reasons must only appear after authentication has passed.
+  const AUTH_FAILURES: FailureReason[] = ['missing_header', 'bad_signature'];
+  const formFields = fc.dictionary(fc.oneof(fc.constantFrom(...HASHED, 'amount', 'mihpayid'), text), text, { maxKeys: 8 });
+  const hexHash = fc.stringMatching(/^[0-9a-f]{128}$/);
+  const body = fc.oneof(
+    text,
+    jsonPayload.map((payload) => JSON.stringify(payload)),
+    formFields.map((fields) => encodeForm(fields)),
+    fc.tuple(formFields, hexHash, fc.boolean()).map(([fields, hash, repeat]) => {
+      const encoded = encodeForm({ ...fields, hash });
+      // Sometimes repeat a field, which must still be an authentication failure when the hash is wrong.
+      return repeat ? `${encoded}&amount=1.00&amount=2.00` : encoded;
+    }),
+  );
+  const headerNames = fc.constantFrom('x-razorpay-signature', 'x-webhook-signature', 'x-webhook-timestamp', 'authorization', 'x-other');
+  const headerValue = fc.oneof(text, fc.base64String().map((b) => `Basic ${b}`), fc.constant(String(NOW)), hexHash);
+  const headers = fc.dictionary(headerNames, headerValue);
+
+  for (const provider of PROVIDERS) {
+    it(provider, () =>
+      fc.assert(
+        fc.asyncProperty(body, headers, secret, credentials, async (rawBody, h, s, c) => {
+          const options = { rawBody, headers: h, secret: s, credentials: c, now: NOW };
+          const result = await verifyWebhook(provider, options as VerifyOptionsMap[typeof provider]);
+          expect(AUTH_FAILURES).toContain(result.ok ? 'ok' : result.reason);
+        }),
+        RUNS,
+      ));
+  }
+});
+
+describe('property 5: verifyWebhook never throws and never rejects, whatever it is given', () => {
+  const REASONS: FailureReason[] = [
+    'missing_header',
+    'bad_signature',
+    'stale_timestamp',
+    'malformed_body',
+    'unsupported_event',
+    'invalid_options',
+    'internal_error',
+  ];
+  const anything = fc.anything({
+    withBigInt: true,
+    withBoxedValues: true,
+    withDate: true,
+    withMap: true,
+    withSet: true,
+    withNullPrototype: true,
+    withObjectString: true,
+    withSparseArray: true,
+    withTypedArray: true,
+  });
+  const provider = fc.oneof(fc.constantFrom(...PROVIDERS), anything);
+  const options = fc.oneof(
+    anything,
+    fc.record(
+      { rawBody: anything, headers: anything, secret: anything, credentials: anything, now: anything, toleranceSeconds: anything },
+      { requiredKeys: [] },
+    ),
+  );
+
+  it('for arbitrary provider and options', () =>
+    fc.assert(
+      fc.asyncProperty(provider, options, async (p, o) => {
+        let pending: Promise<VerifyResult>;
+        try {
+          pending = verifyWebhook(p as 'razorpay', o as VerifyOptionsMap['razorpay']);
+        } catch (error) {
+          throw new Error(`verifyWebhook threw synchronously: ${String((error as Error).message)}`);
+        }
+        // A rejection fails the property here.
+        const result = await pending;
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(REASONS).toContain(result.reason);
+          expect(typeof result.message).toBe('string');
+        }
+      }),
+      { numRuns: 500 },
     ));
 });

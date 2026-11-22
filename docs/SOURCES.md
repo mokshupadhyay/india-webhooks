@@ -19,6 +19,7 @@ Every signing rule in this package comes from the gateway's own documentation or
 | Amounts | Integers in the smallest currency unit (paise), for example `"amount": 50000` for ₹500 |
 | Test vector | SDK test `test/utils/razorpay-utils.spec.js`: body `{"a":1,"b":2,"c":{"d":3}}`, secret `123456`, signature `2fe04e22977002e6c7cb553adab8b460cb9e2a4970d5953cb27a8472752e3bbc`. Recomputed with `openssl dgst -sha256 -hmac 123456` before use |
 | Events mapped | `payment.authorized`, `payment.captured`, `payment.failed`, `payment.pending`, `refund.created`, `refund.processed`, `refund.failed`. Everything else (for example `order.paid`, `refund.speed_changed`, downtime events) is `unknown` |
+| Event id | `x-razorpay-event-id` is not covered by the signature, so it is exposed only as `event.deliveryId`. `event.id` is `event:entity id:created_at`, all from the signed body |
 
 ## Cashfree Payments (Payment Gateway)
 
@@ -39,6 +40,7 @@ Every signing rule in this package comes from the gateway's own documentation or
 | Test vector | None published with a known secret. Sample headers on the docs page have signatures, but the secret is not given |
 | Events mapped | `PAYMENT_SUCCESS_WEBHOOK`, `PAYMENT_FAILED_WEBHOOK`, `PAYMENT_USER_DROPPED_WEBHOOK`, `REFUND_STATUS_WEBHOOK` and `AUTO_REFUND_STATUS_WEBHOOK` when `refund_status` is `SUCCESS` (the only status value shown in the samples; the docs mention cancelled refunds but not the exact string). Other refund statuses and other events, including `PAYMENT_CHARGES_WEBHOOK`, are `unknown` |
 | Not supported | Payouts V1 Cashgram form-encoded signatures |
+| Event id | `x-idempotency-key` is not covered by the signature, so it is exposed only as `event.deliveryId`. `event.id` is `type:cf_payment_id or cf_refund_id:event_time`, all from the signed body |
 
 ## PhonePe Payment Gateway (Standard Checkout v2)
 
@@ -72,9 +74,9 @@ Every signing rule in this package comes from the gateway's own documentation or
 | Timestamp / replay | None |
 | Amounts | Rupees as decimal strings, for example `amount=40.00` |
 | Test vector | SDK test: key `bjg$121`, salt `vhgvs75`, txnid `3123`, amount `1000`, productinfo `mobile`, firstname `Jacob`, email `test@payu.in`, status `success`, hash `687c82156a84271a7a6c63d0e8774d5ac567d9b894a334a47d72e47b72392a5167a1b2add5b253490b70731d9eb3e3a3b7225e0c5f26829befafbbee71977c4c`. Recomputed with `shasum -a 512` |
-| Events mapped | Form payloads by `status`: `success` (with `unmappedstatus=auth` it is `payment.authorized`, otherwise `payment.captured`), `failure`, `pending` |
-| Not supported | Refund and dispute webhooks. They are JSON and the docs show no hash, signature or authentication header for them, so they cannot be verified and come back as `unsupported_event`. The split-payment variant of the reverse hash (`splitInfo`) is not implemented |
-| Limit | Only the fields in the hash are authenticated. `mihpayid`, `mode`, `bank_ref_num`, `unmappedstatus` and others are not covered by the hash |
+| Events mapped | Form payloads by the hashed `status` only: `success` (`payment.captured`), `failure` (`payment.failed`), `pending` (`payment.pending`). The docs say "Treat only success as successful". `unmappedstatus` (for example `auth` or `captured`) is not hashed, so it never changes the type; it is in `event.unverified` |
+| Not supported | Refund and dispute webhooks. They are JSON and the docs show no hash, signature or authentication header for them, so they cannot be verified and come back as `missing_header` (no hash). The split-payment variant of the reverse hash (`splitInfo`) is not implemented |
+| Limit | Only the fields in the hash are authenticated. `mihpayid`, `mode`, `bank_ref_num`, `unmappedstatus` and others are not covered by the hash; they are listed in `event.unverified`. A body in which any field name appears more than once is rejected |
 
 ## Juspay (Express Checkout / HyperCheckout)
 
@@ -93,6 +95,7 @@ Every signing rule in this package comes from the gateway's own documentation or
 | Amounts | Rupees, "stringified double or integer values with upto two decimal places"; webhooks carry JSON numbers such as `"amount": 8` |
 | Test vector | None published |
 | Events mapped | `ORDER_SUCCEEDED`, `ORDER_FAILED`, `ORDER_AUTHORIZED`, `ORDER_REFUNDED`, `ORDER_REFUND_FAILED`, `REFUND_INITIATED`. Others (`TXN_*`, mandate, notification and `AUTO_REFUND_*` events) are `unknown` |
+| Refund chosen | https://juspay.io/in/docs/resources/docs/common-resources/refunds, section "Refund Status": `PENDING` (initial status of every refund), `SUCCESS`, `FAILURE`, `MANUAL_REVIEW`. `ORDER_REFUNDED` reports the most recently `created` refund with status `SUCCESS`, `ORDER_REFUND_FAILED` the most recent `FAILURE`, `REFUND_INITIATED` the most recent `PENDING`. No matching refund is `malformed_body` |
 | Not supported | JWT (JWE + JWS) encrypted webhooks |
 
 ## Easebuzz
@@ -109,6 +112,6 @@ Every signing rule in this package comes from the gateway's own documentation or
 | Timestamp / replay | None |
 | Amounts | Rupees as decimal strings (the same `amount` that was sent at payment initiation) |
 | Test vector | None published |
-| Events mapped | By `status`: `success` (`payment.captured`), `pending` (`payment.pending`), `usercancelled` (`payment.failed`). Other statuses are `unknown` with the raw fields intact |
+| Events mapped | By `status`, lowercased first, exactly as the plugin's `easebuzz_apply_payment_status` in `easepay-lib.php` (called from `update_webhook.php` line 65): line 86 `$status = strtolower((string) $status);`, line 90 `case 'success'` (order paid, `payment.captured`), line 101 `case 'pending'` (`payment.pending`), line 110 `case 'usercancelled'` (order cancelled) and line 119 `default` (order failed) both become `payment.failed`. So `failure`, `dropped`, `bounced` and any other status are `payment.failed` |
 | Note | The plugin decodes the body twice (`parse_str(urldecode($body))`). This package decodes it once, as `application/x-www-form-urlencoded` requires. The two only differ for values containing an encoded `%` or `+` |
-| Limit | Only the fields in the hash are authenticated; `easepayid`, `mode` and others are not |
+| Limit | Only the fields in the hash are authenticated; `easepayid`, `mode` and others are not. They are listed in `event.unverified`. A body in which any field name appears more than once is rejected |

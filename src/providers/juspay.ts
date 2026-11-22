@@ -54,12 +54,23 @@ function paymentFrom(order: JsonObject): PaymentDetails {
   };
 }
 
-/** The most recently created entry of `order.refunds`. */
-function latestRefund(order: JsonObject): JsonObject | undefined {
+/**
+ * The refund status each refund event reports, from Juspay's refund status
+ * table (PENDING, SUCCESS, FAILURE, MANUAL_REVIEW). Refunds start as PENDING.
+ */
+const REFUND_STATUS_FOR_EVENT: Record<string, string> = {
+  ORDER_REFUNDED: 'SUCCESS',
+  ORDER_REFUND_FAILED: 'FAILURE',
+  REFUND_INITIATED: 'PENDING',
+};
+
+/** The most recently created entry of `order.refunds` with this status. Later entries win ties. */
+function latestRefundWithStatus(order: JsonObject, status: string): JsonObject | undefined {
   let latest: JsonObject | undefined;
   for (const item of arrayAt(order.refunds) || []) {
     const refund = objectAt(item);
-    if (refund && (!latest || (textAt(refund.created) || '') >= (textAt(latest.created) || ''))) latest = refund;
+    if (!refund || (textAt(refund.status) || '').toUpperCase() !== status) continue;
+    if (!latest || (textAt(refund.created) || '') >= (textAt(latest.created) || '')) latest = refund;
   }
   return latest;
 }
@@ -84,6 +95,8 @@ export function normalizeJuspay(raw: JsonObject): WebhookEvent {
     provider: 'juspay',
     type: 'unknown',
     id: '',
+    // Juspay sends no delivery id header.
+    deliveryId: null,
     occurredAt: isoFromDateTime(raw.date_created),
     providerType,
     raw,
@@ -94,11 +107,14 @@ export function normalizeJuspay(raw: JsonObject): WebhookEvent {
     event.type = PAYMENT_TYPES[providerType] || REFUND_TYPES[providerType];
     event.payment = paymentFrom(order);
     if (REFUND_TYPES[providerType]) {
-      const refund = latestRefund(order);
-      if (refund) event.refund = refundFrom(refund, event.payment, order);
+      const status = REFUND_STATUS_FOR_EVENT[providerType];
+      const refund = latestRefundWithStatus(order, status);
+      if (!refund) throw new MalformedBody(`${providerType} has no refund with status ${status} in content.order.refunds.`);
+      event.refund = refundFrom(refund, event.payment, order);
     }
   }
 
+  // Body fields. Juspay does not sign the body, so nothing here is authenticated.
   event.id = textAt(raw.id) || [providerType || 'event', textAt(order && order.id) || ''].join(':');
   return event;
 }

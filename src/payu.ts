@@ -5,6 +5,8 @@ export type {
   CredentialsVerifyOptions,
   EventType,
   FailureReason,
+  HeaderEntries,
+  HeaderForEach,
   HeadersInput,
   HeadersLike,
   HeaderValue,

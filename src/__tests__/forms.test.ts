@@ -71,16 +71,19 @@ describe('payu', () => {
     expect(event.raw.addedon).toBe('2026-03-04 14:46:14');
   });
 
-  it('maps failure, pending and auth', async () => {
+  it('maps failure, pending and success from the hashed status only', async () => {
     const cases: [Record<string, string>, string][] = [
       [{ status: 'failure' }, 'payment.failed'],
       [{ status: 'pending' }, 'payment.pending'],
-      [{ status: 'success', unmappedstatus: 'auth' }, 'payment.authorized'],
+      // `unmappedstatus` is not hashed, so it does not change the type; it is kept in `unverified`.
+      [{ status: 'success', unmappedstatus: 'auth' }, 'payment.captured'],
       [{ status: 'weird' }, 'unknown'],
     ];
     for (const [override, type] of cases) {
       const request = await signWebhook('payu', { ...payuSuccessFields, ...override }, SALT);
-      expect(expectOk(await verifyWebhook('payu', { ...request, secret: SALT })).type).toBe(type);
+      const event = expectOk(await verifyWebhook('payu', { ...request, secret: SALT }));
+      expect(event.type).toBe(type);
+      expect(event.unverified && event.unverified.unmappedstatus).toBe(override.unmappedstatus || 'captured');
     }
   });
 
@@ -114,8 +117,10 @@ describe('payu', () => {
     expectReason(await verifyWebhook('payu', { ...request, rawBody, secret: SALT }), 'malformed_body');
   });
 
-  it('reports JSON refund webhooks as unsupported, because PayU does not sign them', async () => {
-    expectReason(await verifyWebhook('payu', { rawBody: payuRefundJson, secret: SALT }), 'unsupported_event');
+  it('reports JSON refund webhooks as missing_header, because PayU does not sign them', async () => {
+    const result = await verifyWebhook('payu', { rawBody: payuRefundJson, secret: SALT });
+    expectReason(result, 'missing_header');
+    if (!result.ok) expect(result.message).toMatch(/refund and dispute webhooks are JSON and carry no hash/);
   });
 
   it('reports a signed but invalid amount as malformed', async () => {
@@ -156,7 +161,8 @@ describe('easebuzz', () => {
       ['success', 'payment.captured'],
       ['pending', 'payment.pending'],
       ['usercancelled', 'payment.failed'],
-      ['failure', 'unknown'],
+      // Easebuzz's own handler marks every other status failed.
+      ['failure', 'payment.failed'],
     ];
     for (const [status, type] of cases) {
       const request = await signWebhook('easebuzz', { ...FIELDS, status }, 'ebsalt');
@@ -175,7 +181,7 @@ describe('easebuzz', () => {
     expectReason(await verifyWebhook('easebuzz', { rawBody: encodeForm(FIELDS), secret: 'ebsalt' }), 'missing_header');
   });
 
-  it('reports a JSON body as malformed', async () => {
-    expectReason(await verifyWebhook('easebuzz', { rawBody: '{"status":"success"}', secret: 'ebsalt' }), 'malformed_body');
+  it('reports a JSON body as missing_header, since it carries no hash', async () => {
+    expectReason(await verifyWebhook('easebuzz', { rawBody: '{"status":"success"}', secret: 'ebsalt' }), 'missing_header');
   });
 });

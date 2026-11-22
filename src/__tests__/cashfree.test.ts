@@ -50,7 +50,9 @@ describe('cashfree', () => {
     });
     expect(request.rawBody).toContain('"payment_amount":6.00');
     const event = expectOk(await verifyWebhook('cashfree', { ...request, secret: SECRET, now: NOW }));
-    expect(event.id).toBe('idem-1');
+    // The header is unsigned, so it is only deliveryId; the id comes from the signed body.
+    expect(event.deliveryId).toBe('idem-1');
+    expect(event.id).toBe('PAYMENT_SUCCESS_WEBHOOK:5979305158:2026-07-15T08:00:05+05:30');
     expect(event.type).toBe('payment.captured');
     expect(event.payment && event.payment.amountMinor).toBe('600');
     expect(event.payment && event.payment.id).toBe('5979305158');

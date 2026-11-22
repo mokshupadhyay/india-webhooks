@@ -44,8 +44,11 @@ export interface SignedRequest {
 const jsonText = (payload: JsonObject | string): string =>
   typeof payload === 'string' ? payload : JSON.stringify(payload);
 
+// The same rules as the verifiers, so the kit never signs with a secret they reject.
 function requireString(value: unknown, label: string): string {
-  if (typeof value !== 'string' || value === '') throw new TypeError(`${label} must be a non-empty string.`);
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new TypeError(`${label} must be a non-empty string that is not only whitespace.`);
+  }
   return value;
 }
 
@@ -53,6 +56,9 @@ function requireCredentials(value: unknown): Credentials {
   const c = value as Credentials;
   if (typeof c !== 'object' || c === null || typeof c.username !== 'string' || typeof c.password !== 'string') {
     throw new TypeError('credentials must be { username: string, password: string }.');
+  }
+  if (c.username.trim() === '' || c.password.trim() === '') {
+    throw new TypeError('credentials.username and credentials.password must be non-empty and not only whitespace.');
   }
   return c;
 }
@@ -66,7 +72,11 @@ async function signForm(
   for (const key of Object.keys(fields)) if (key !== 'hash') unsigned[key] = fields[key];
   const encoded = encodeForm(unsigned);
   // Hash the values exactly as a receiver will decode them.
-  const { fields: decoded } = parseForm(utf8(encoded));
+  const { fields: decoded, repeated } = parseForm(utf8(encoded));
+  if (repeated.size > 0) {
+    // For example two names that differ only in lone surrogates, which both decode to U+FFFD.
+    throw new TypeError(`Field names decode to the same name: ${Array.from(repeated).join(', ')}. Verifiers reject repeated fields.`);
+  }
   const signature = await hash(decoded, salt);
   return {
     headers: { 'content-type': 'application/x-www-form-urlencoded' },

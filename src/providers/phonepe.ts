@@ -51,6 +51,8 @@ export function normalizePhonepe(raw: JsonObject): WebhookEvent {
     provider: 'phonepe',
     type,
     id: '',
+    // PhonePe sends no delivery id header.
+    deliveryId: null,
     occurredAt: isoFromMillis(payload && payload.timestamp) || isoFromMillis(lastAttempt && lastAttempt.timestamp),
     providerType,
     raw,
@@ -78,6 +80,7 @@ export function normalizePhonepe(raw: JsonObject): WebhookEvent {
     };
   }
 
+  // Body fields. PhonePe does not sign the body, so nothing here is authenticated.
   const entityId = payload && (textAt(payload.refundId) || textAt(payload.orderId));
   event.id = [providerType || 'event', entityId || '', textAt(payload && payload.state) || ''].join(':');
   return event;

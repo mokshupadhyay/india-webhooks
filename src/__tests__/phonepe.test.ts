@@ -1,5 +1,6 @@
 import { verifyWebhook } from '../index';
 import { verifyPhonepeWebhook } from '../phonepe';
+import { phonepeAuthorization } from '../providers/phonepe';
 import { signWebhook } from '../testing';
 import { phonepeOrderCompleted, phonepeRefundCompleted } from './fixtures';
 import { changeChar, expectOk, expectReason, indexes } from './helpers';
@@ -21,13 +22,17 @@ describe('phonepe', () => {
     // PhonePe says to identify events by `event`, which this body lacks.
     expect(event.type).toBe('unknown');
 
-    // tests/utils.test.ts: empty username and password.
-    expectOk(
+    // tests/utils.test.ts: empty username and password. Kept as a check of the
+    // scheme computation only; the verifier refuses empty credentials.
+    const emptyVector = 'e7ac0786668e0ff0f02b62bd04f45ff636fd82db63b1104601c975dc005f3a67';
+    expect(await phonepeAuthorization({ username: '', password: '' })).toBe(emptyVector);
+    expectReason(
       await verifyWebhook('phonepe', {
         rawBody: '{}',
         credentials: { username: '', password: '' },
-        headers: { authorization: 'e7ac0786668e0ff0f02b62bd04f45ff636fd82db63b1104601c975dc005f3a67' },
+        headers: { authorization: emptyVector },
       }),
+      'invalid_options',
     );
 
     // The SDK test with wrong credentials must fail.
