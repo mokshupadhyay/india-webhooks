@@ -316,6 +316,10 @@ npm run build
 
 Tests include each gateway's published test vector where one exists, sign-then-verify round trips, one-character tampering of the body, the signature and each signed header, wrong secrets, Cashfree's timestamp window, and amount conversion. Property tests use [fast-check](https://github.com/dubzzz/fast-check). They also check that a request without valid authentication only ever gets `missing_header` or `bad_signature`, and that `verifyWebhook` never throws or rejects for arbitrary `provider` and `options` values. `src/__tests__/regressions.test.ts` covers the fixes made after review. [docs/MUTATION_EVIDENCE.md](docs/MUTATION_EVIDENCE.md) shows each property failing against a deliberate bug.
 
+## Author
+
+Built and maintained by [Moksh Upadhyay](https://mokshupadhyay.com).
+
 ## License
 
 MIT
