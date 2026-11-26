@@ -5,6 +5,8 @@
 
 Verify and normalise payment webhooks from Indian payment gateways, and test your handler with requests signed the same way the gateways sign them.
 
+Read the write-up: [Verifying payment webhooks from Indian gateways](https://mokshupadhyay.com/writing/indian-payment-webhooks), with a live signature playground.
+
 Every gateway authenticates webhooks differently: an HMAC of the body, an HMAC of a timestamp plus the body, a SHA-512 of form fields in reverse order, or only a hash of a username and password. This package checks each one exactly as the gateway documents it and returns one event shape with amounts as integer paise.
 
 - **Six gateways.** Razorpay, Cashfree Payments, PhonePe Payment Gateway, PayU India, Juspay and Easebuzz. Every rule is taken from the gateway's docs or official SDK, listed in [docs/SOURCES.md](docs/SOURCES.md).
